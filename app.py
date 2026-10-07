@@ -186,12 +186,14 @@ if user_question:
                             )
                             st.code(src["code_text"], language="python")
 
-                # Extract tokens and cost breakdown
-                emb_tokens = response.embedding_usage.total_tokens if response.embedding_usage else 0
-                prompt_tokens = response.llm_usage.prompt_tokens if response.llm_usage else 0
-                comp_tokens = response.llm_usage.completion_tokens if response.llm_usage else 0
-                query_tokens = response.total_tokens
-                query_cost = response.cost_usd
+                # Extract tokens and cost breakdown defensively
+                emb_usage = getattr(response, "embedding_usage", None)
+                llm_usage = getattr(response, "llm_usage", None)
+                emb_tokens = emb_usage.total_tokens if emb_usage else 0
+                prompt_tokens = llm_usage.prompt_tokens if llm_usage else 0
+                comp_tokens = llm_usage.completion_tokens if llm_usage else 0
+                query_tokens = getattr(response, "total_tokens", emb_tokens + prompt_tokens + comp_tokens)
+                query_cost = getattr(response, "cost_usd", 0.0)
 
                 # Update running session totals
                 st.session_state.session_tokens += query_tokens
