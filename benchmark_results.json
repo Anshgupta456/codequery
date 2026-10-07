@@ -1,0 +1,122 @@
+[
+  {
+    "repo": "small_repo (4 files, 20 chunks)",
+    "category": "Non-existent Functionality",
+    "question": "Where is the machine learning neural network training loop implemented?",
+    "found": false,
+    "expected_behavior": "Refusal: 'I couldn't find this in the codebase.'",
+    "top_score": 0.1107,
+    "citations": [],
+    "retrieval_ms": 1220.7,
+    "answer_ms": 0.0,
+    "total_ms": 1221.6,
+    "answer_text": "I couldn't find this in the codebase."
+  },
+  {
+    "repo": "small_repo (4 files, 20 chunks)",
+    "category": "Non-existent Functionality",
+    "question": "How does the system send password reset verification emails via SMTP?",
+    "found": false,
+    "expected_behavior": "Refusal: 'I couldn't find this in the codebase.'",
+    "top_score": 0.2974,
+    "citations": [],
+    "retrieval_ms": 704.3,
+    "answer_ms": 0.0,
+    "total_ms": 722.6,
+    "answer_text": "I couldn't find this in the codebase."
+  },
+  {
+    "repo": "small_repo (4 files, 20 chunks)",
+    "category": "Vague / Ambiguous Question",
+    "question": "How does the code handle passwords and security?",
+    "found": true,
+    "expected_behavior": "Grounded answer citing auth.py:8-16 (hash_password, verify_password)",
+    "top_score": 0.3517,
+    "citations": [
+      "auth.py:4-4",
+      "auth.py:8-11"
+    ],
+    "retrieval_ms": 699.2,
+    "answer_ms": 2690.7,
+    "total_ms": 3389.9,
+    "answer_text": "The code handles passwords and security by providing a function called `hash_password`, which hashes a plaintext password using the SHA-256 algorithm combined with a salt. The salt is created by concatenating the password with a `SECRET_KEY`, which is defined as \"super-secret-key\". This salted password is then encoded in UTF-8 and hashed to produce a secure representation of the password.\n\nThe relevant details can be found in the following lines:\n- The `SECRET_KEY` is defined in `auth.py:4-4`.\n- The `hash_password` function, which implements the hashing logic, is defined in `auth.py:8-11`."
+  },
+  {
+    "repo": "small_repo (4 files, 20 chunks)",
+    "category": "Multi-file Interaction",
+    "question": "How does user logout in AuthService interact with DatabaseClient session invalidation?",
+    "found": true,
+    "expected_behavior": "Multi-file citations: auth.py:32-34 and database.py:17-22",
+    "top_score": 0.5099,
+    "citations": [
+      "auth.py:32-34",
+      "database.py:17-22"
+    ],
+    "retrieval_ms": 696.1,
+    "answer_ms": 6131.4,
+    "total_ms": 6827.5,
+    "answer_text": "In the `AuthService` class, the `logout` method interacts with the `DatabaseClient` to invalidate a user's session. When the `logout` method is called with a `user_id`, it invokes the `invalidate_session` method of the `db` attribute, which is an instance of `DatabaseClient`. This method attempts to remove the session associated with the provided `user_id` from the `sessions` dictionary.\n\nSpecifically, the `logout` method is defined as follows:\n\n```python\ndef logout(self, user_id: str) -> bool:\n    \"\"\"Clear user session token.\"\"\"\n    return self.db.invalidate_session(user_id)\n```\nThis indicates that the `logout` method returns the result of the `invalidate_session` call, which is a boolean indicating whether the session was successfully invalidated (`auth.py:32-34`).\n\nThe `invalidate_session` method in the `DatabaseClient` class checks if the `user_id` exists in the `sessions` dictionary and deletes it if found, returning `True`. If the `user_id` is not found, it returns `False`:\n\n```python\ndef invalidate_session(self, user_id: str) -> bool:\n    \"\"\"Invalidate active session for user.\"\"\"\n    if user_id in self.sessions:\n        del self.sessions[user_id]\n        return True\n    return False\n```\nThis functionality is defined in the `DatabaseClient` class (`database.py:17-22`).\n\nThus, the interaction is that `AuthService.logout` calls `DatabaseClient.invalidate_session` to clear the user's session based on the provided `user_id`."
+  },
+  {
+    "repo": "large_repo (167 files, 923 chunks)",
+    "category": "Non-existent Functionality",
+    "question": "Where is the cryptocurrency payment processing gateway with Ethereum or Bitcoin implemented?",
+    "found": false,
+    "expected_behavior": "Refusal: 'I couldn't find this in the codebase.'",
+    "top_score": 0.2977,
+    "citations": [],
+    "retrieval_ms": 1085.5,
+    "answer_ms": 0.0,
+    "total_ms": 1097.5,
+    "answer_text": "I couldn't find this in the codebase."
+  },
+  {
+    "repo": "large_repo (167 files, 923 chunks)",
+    "category": "Vague / Ambiguous Question",
+    "question": "What do the handler components in this system do?",
+    "found": true,
+    "expected_behavior": "General summary grounded in subsystem handlers and process_* methods",
+    "top_score": 0.4799,
+    "citations": [
+      "data/data_handler_1.py:6-21",
+      "data/data_handler_2.py:6-21",
+      "data/data_handler_3.py:6-21",
+      "data/data_handler_4.py:6-21",
+      "data/data_handler_5.py:6-21"
+    ],
+    "retrieval_ms": 634.7,
+    "answer_ms": 4977.9,
+    "total_ms": 5612.5,
+    "answer_text": "The handler components in this system are classes that manage data operations for different units (from unit 1 to unit 5). Each class has methods to process data and reset the internal status. Specifically:\n\n1. **DataHandler1** (unit 1) processes data with the method `process_data_1` and can reset its status with `reset_status` (`data/data_handler_1.py:6-21`).\n2. **DataHandler2** (unit 2) processes data with `process_data_2` and can reset its status with `reset_status` (`data/data_handler_2.py:6-21`).\n3. **DataHandler3** (unit 3) processes data with `process_data_3` and can reset its status with `reset_status` (`data/data_handler_3.py:6-21`).\n4. **DataHandler4** (unit 4) processes data with `process_data_4` and can reset its status with `reset_status` (`data/data_handler_4.py:6-21`).\n5. **DataHandler5** (unit 5) processes data with `process_data_5` and can reset its status with `reset_status` (`data/data_handler_5.py:6-21`).\n\nEach handler checks if it is enabled before processing data and returns a status indicating whether the data was processed or if the handler is disabled."
+  },
+  {
+    "repo": "large_repo (167 files, 923 chunks)",
+    "category": "Multi-file Interaction",
+    "question": "How does CheckoutService coordinate user authentication and billing payment?",
+    "found": true,
+    "expected_behavior": "Multi-file citations: services/checkout_service.py, auth_handler_1.py, billing_handler_1.py",
+    "top_score": 0.6054,
+    "citations": [
+      "services/checkout_service.py:7-25"
+    ],
+    "retrieval_ms": 657.2,
+    "answer_ms": 2839.1,
+    "total_ms": 3496.3,
+    "answer_text": "The `CheckoutService` coordinates user authentication and billing payment through its `place_order` method. This method first validates the user session by calling the `process_auth_1` method of the `auth_handler`, passing the user token as a payload. If the authentication status is not \"processed\", it raises a `PermissionError` indicating that user authentication failed during checkout. \n\nOnce the user is authenticated, it proceeds to process the payment by calling the `process_billing_1` method of the `billing_handler` with the order data. Finally, it returns a dictionary containing the order status, authentication status, and payment details.\n\nThis functionality is defined in the `CheckoutService` class, specifically in the `place_order` method located in `services/checkout_service.py:7-25`."
+  },
+  {
+    "repo": "large_repo (167 files, 923 chunks)",
+    "category": "Multi-file Interaction",
+    "question": "How does the AuditPipeline record security events using SecurityHandler?",
+    "found": true,
+    "expected_behavior": "Multi-file citations: analytics/audit_pipeline.py and security_handler_1.py",
+    "top_score": 0.6243,
+    "citations": [
+      "analytics/audit_pipeline.py:13-16"
+    ],
+    "retrieval_ms": 625.9,
+    "answer_ms": 3032.9,
+    "total_ms": 3658.8,
+    "answer_text": "The `AuditPipeline` records security events by using the `SecurityHandler1` to process event details. In the `record_event` method, it calls `self.security.process_security_1(details)` to process the event details. If the returned status is \"processed\", it appends the event to the `events` list. This is shown in the following code:\n\n- The `record_event` method is defined in `analytics/audit_pipeline.py:13-16`.\n- The processing of the event details occurs in the line `if self.security.process_security_1(details).get(\"status\") == \"processed\":` within that method.\n\nThus, the `AuditPipeline` records security events by validating them through the `SecurityHandler1` before adding them to its internal list of events."
+  }
+]

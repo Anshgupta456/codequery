@@ -1,0 +1,1 @@
+"""Module data package initialization."""

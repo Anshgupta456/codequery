@@ -1,0 +1,1 @@
+"""Module reports package initialization."""

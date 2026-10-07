@@ -1,0 +1,1 @@
+"""Module analytics package initialization."""
