@@ -51,7 +51,7 @@ LLM_MODEL = "gpt-4o-mini"
 
 # Retrieval parameters
 DEFAULT_TOP_K = 5
-DEFAULT_SIMILARITY_THRESHOLD = 0.5  # Cosine distance or similarity threshold
+DEFAULT_SIMILARITY_THRESHOLD = 0.30  # Cosine similarity threshold (score = 1.0 - distance)
 
 # Persistent Chroma store directory
 CHROMA_PERSIST_DIR = Path("./chroma_data")
