@@ -38,6 +38,8 @@ def is_ignored_file(
     """Check if a file should be ignored based on filename or extension."""
     if file_path.name in ignored_filenames:
         return True
+    if file_path.name.endswith(".min.js") or file_path.name.endswith(".min.css"):
+        return True
     if file_path.suffix.lower() in ignored_extensions:
         return True
     return False

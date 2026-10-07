@@ -10,6 +10,8 @@ IGNORED_DIRS = {
     "__pycache__",
     "dist",
     "build",
+    ".next",
+    "coverage",
     ".pytest_cache",
     ".chroma",
     "chroma_data",
@@ -40,9 +42,21 @@ IGNORED_FILENAMES = {
     "Pipfile.lock",
 }
 
-# Supported file extensions for ingestion (starting with Python)
+# Supported file extensions for ingestion (Python + JS/TS MERN)
 SUPPORTED_EXTENSIONS = {
     ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+}
+
+EXTENSION_TO_LANGUAGE = {
+    ".py": "python",
+    ".js": "javascript",
+    ".jsx": "jsx",
+    ".ts": "typescript",
+    ".tsx": "tsx",
 }
 
 # Embedding & LLM Models

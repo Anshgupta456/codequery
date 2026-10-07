@@ -31,6 +31,7 @@ class RetrievedChunk:
     name: str
     score: float       # Cosine similarity score: 1.0 - distance (higher is more relevant)
     distance: float    # Raw Chroma distance
+    language: str = "unknown"
 
     @property
     def citation(self) -> str:
@@ -50,6 +51,7 @@ class RetrievedChunk:
             "score": self.score,
             "distance": self.distance,
             "code_text": self.code_text,
+            "language": self.language,
         }
 
 
@@ -136,6 +138,7 @@ def retrieve_chunks(
                 name=meta.get("name", ""),
                 score=similarity_score,
                 distance=round(float(dist), 4),
+                language=meta.get("language", "unknown"),
             )
         )
 

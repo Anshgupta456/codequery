@@ -157,6 +157,7 @@ def store_chunks(
             "end_line": int(chunk.end_line),
             "chunk_type": str(chunk.chunk_type),
             "name": str(chunk.name or ""),
+            "language": str(getattr(chunk, "language", "python")),
         }
         metadatas.append(metadata)
 

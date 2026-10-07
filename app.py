@@ -134,11 +134,13 @@ for msg in st.session_state.messages:
 
                 sources = msg.get("sources", [])
                 for idx, src in enumerate(sources, 1):
+                    src_lang = src.get("language", "python")
+                    highlight_lang = "javascript" if src_lang in ("javascript", "jsx") else ("typescript" if src_lang in ("typescript", "tsx") else "python")
                     st.markdown(
                         f"**[{idx}] `{src['citation']}`** (Type: `{src.get('chunk_type', '')}`, "
-                        f"Symbol: `{src.get('name') or '(none)'}`, Similarity Score: `{src.get('score', 0):.4f}`)"
+                        f"Language: `{src_lang}`, Symbol: `{src.get('name') or '(none)'}`, Similarity Score: `{src.get('score', 0):.4f}`)"
                     )
-                    st.code(src.get("code_text", ""), language="python")
+                    st.code(src.get("code_text", ""), language=highlight_lang)
 
         # Display per-query Token Usage and Cost breakdown
         if msg.get("usage"):
@@ -180,11 +182,13 @@ if user_question:
                             st.markdown("**Citations:** " + ", ".join(f"`{c}`" for c in citations))
 
                         for idx, src in enumerate(sources_data, 1):
+                            src_lang = src.get("language", "python")
+                            highlight_lang = "javascript" if src_lang in ("javascript", "jsx") else ("typescript" if src_lang in ("typescript", "tsx") else "python")
                             st.markdown(
                                 f"**[{idx}] `{src['citation']}`** (Type: `{src['chunk_type']}`, "
-                                f"Symbol: `{src['name'] or '(none)'}`, Score: `{src['score']:.4f}`)"
+                                f"Language: `{src_lang}`, Symbol: `{src['name'] or '(none)'}`, Score: `{src['score']:.4f}`)"
                             )
-                            st.code(src["code_text"], language="python")
+                            st.code(src["code_text"], language=highlight_lang)
 
                 # Extract tokens and cost breakdown defensively
                 emb_usage = getattr(response, "embedding_usage", None)

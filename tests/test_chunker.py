@@ -7,6 +7,7 @@ from src.chunker import (
     chunk_file,
     chunk_line_based,
     chunk_python_code,
+    chunk_treesitter_code,
 )
 from src.ingest import collect_files, is_binary_file, is_ignored_file
 
@@ -107,6 +108,7 @@ def test_chunk_metadata_to_dict():
     assert d["end_line"] == 25
     assert d["chunk_type"] == "function"
     assert d["code_text"] == "def test():\n    pass"
+    assert d["language"] == "python"
 
 
 def test_decorated_functions_and_classes():
@@ -208,3 +210,154 @@ def test_empty_input():
     """Verify empty or whitespace-only code returns empty list of chunks."""
     assert chunk_python_code("", "empty.py") == []
     assert chunk_python_code("   \n\n  ", "empty.py") == []
+
+
+def test_react_function_component_chunking():
+    """Verify syntax-aware chunk boundaries for React function and arrow components."""
+    react_code = (
+        "import React, { useState } from 'react';\n"
+        "\n"
+        "export function UserProfile({ user }) {\n"
+        "    const [open, setOpen] = useState(false);\n"
+        "    return (\n"
+        "        <div className=\"profile\">\n"
+        "            <h2>{user.name}</h2>\n"
+        "            {open && <p>{user.bio}</p>}\n"
+        "        </div>\n"
+        "    );\n"
+        "}\n"
+        "\n"
+        "export const StatusBadge = ({ active }) => {\n"
+        "    return <span className={active ? 'active' : 'inactive'}>Status</span>;\n"
+        "};\n"
+    )
+
+    chunks = chunk_treesitter_code(react_code, "components/UserProfile.jsx", language="jsx")
+
+    # Should produce:
+    # 1. Preamble module chunk (line 1)
+    # 2. Function component UserProfile (lines 3-11)
+    # 3. Arrow function component StatusBadge (lines 13-15)
+    assert len(chunks) == 3
+
+    mod_chunk = chunks[0]
+    assert mod_chunk.chunk_type == "module"
+    assert mod_chunk.start_line == 1
+    assert mod_chunk.end_line == 1
+    assert mod_chunk.language == "jsx"
+
+    comp_chunk = chunks[1]
+    assert comp_chunk.chunk_type == "function"
+    assert comp_chunk.name == "UserProfile"
+    assert comp_chunk.start_line == 3
+    assert comp_chunk.end_line == 11
+    assert comp_chunk.language == "jsx"
+    assert "export function UserProfile({ user }) {" in comp_chunk.code_text
+
+    badge_chunk = chunks[2]
+    assert badge_chunk.chunk_type == "function"
+    assert badge_chunk.name == "StatusBadge"
+    assert badge_chunk.start_line == 13
+    assert badge_chunk.end_line == 15
+    assert badge_chunk.language == "jsx"
+    assert "export const StatusBadge" in badge_chunk.code_text
+
+
+def test_express_route_handler_chunking():
+    """Verify syntax-aware chunk boundaries for Express route handlers."""
+    express_code = (
+        "const express = require('express');\n"
+        "const router = express.Router();\n"
+        "\n"
+        "router.post('/login', async (req, res) => {\n"
+        "    const { email, password } = req.body;\n"
+        "    return res.json({ token: 'jwt-123' });\n"
+        "});\n"
+        "\n"
+        "router.get('/me', (req, res) => {\n"
+        "    return res.json(req.user);\n"
+        "});\n"
+        "\n"
+        "module.exports = router;\n"
+    )
+
+    chunks = chunk_treesitter_code(express_code, "routes/auth.js", language="javascript")
+
+    # Should produce:
+    # 1. Module preamble: lines 1-2
+    # 2. Express route: router.post('/login'): lines 4-7
+    # 3. Express route: router.get('/me'): lines 9-11
+    # 4. Module export: line 13
+    assert len(chunks) == 4
+
+    preamble = chunks[0]
+    assert preamble.chunk_type == "module"
+    assert preamble.start_line == 1
+    assert preamble.end_line == 2
+    assert preamble.language == "javascript"
+
+    post_route = chunks[1]
+    assert post_route.chunk_type == "function"
+    assert post_route.name == "router.post('/login')"
+    assert post_route.start_line == 4
+    assert post_route.end_line == 7
+    assert "router.post('/login'" in post_route.code_text
+
+    get_route = chunks[2]
+    assert get_route.chunk_type == "function"
+    assert get_route.name == "router.get('/me')"
+    assert get_route.start_line == 9
+    assert get_route.end_line == 11
+    assert "router.get('/me'" in get_route.code_text
+
+    export_chunk = chunks[3]
+    assert export_chunk.chunk_type == "module"
+    assert export_chunk.start_line == 13
+    assert export_chunk.end_line == 13
+    assert "module.exports = router;" in export_chunk.code_text
+
+
+def test_nodejs_module_chunking():
+    """Verify syntax-aware chunk boundaries for Node.js modules with Mongoose schemas and methods."""
+    model_code = (
+        "const mongoose = require('mongoose');\n"
+        "\n"
+        "const UserSchema = new mongoose.Schema({\n"
+        "    username: { type: String, required: true },\n"
+        "    email: { type: String, required: true }\n"
+        "});\n"
+        "\n"
+        "UserSchema.methods.comparePassword = async function(candidate) {\n"
+        "    return candidate === this.password;\n"
+        "};\n"
+        "\n"
+        "module.exports = mongoose.model('User', UserSchema);\n"
+    )
+
+    chunks = chunk_treesitter_code(model_code, "models/User.js", language="javascript")
+
+    # Should produce:
+    # 1. Schema setup module chunk: lines 1-6
+    # 2. Method UserSchema.methods.comparePassword: lines 8-10
+    # 3. Export module chunk: line 12
+    assert len(chunks) == 3
+
+    schema_chunk = chunks[0]
+    assert schema_chunk.chunk_type == "module"
+    assert schema_chunk.start_line == 1
+    assert schema_chunk.end_line == 6
+    assert "new mongoose.Schema" in schema_chunk.code_text
+
+    method_chunk = chunks[1]
+    assert method_chunk.chunk_type == "function"
+    assert method_chunk.name == "UserSchema.methods.comparePassword"
+    assert method_chunk.start_line == 8
+    assert method_chunk.end_line == 10
+    assert "UserSchema.methods.comparePassword" in method_chunk.code_text
+
+    export_chunk = chunks[2]
+    assert export_chunk.chunk_type == "module"
+    assert export_chunk.start_line == 12
+    assert export_chunk.end_line == 12
+    assert "module.exports = mongoose.model" in export_chunk.code_text
+
