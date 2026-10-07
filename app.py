@@ -1,4 +1,4 @@
-"""CodeQuery Streamlit Application (Phase 5)."""
+"""CodeQuery Streamlit Application with Token Usage and Cost Tracking."""
 import os
 import sys
 from pathlib import Path
@@ -15,6 +15,7 @@ from src.config import (
     DEFAULT_TOP_K,
     EMBEDDING_MODEL,
     LLM_MODEL,
+    MODEL_PRICING,
 )
 from src.embedder import get_chroma_client, index_directory
 from src.qa_chain import NOT_FOUND_RESPONSE, ask_codebase
@@ -33,6 +34,12 @@ if "indexed_repo" not in st.session_state:
     st.session_state.indexed_repo = None
 if "indexed_count" not in st.session_state:
     st.session_state.indexed_count = None
+if "session_tokens" not in st.session_state:
+    st.session_state.session_tokens = 0
+if "session_cost" not in st.session_state:
+    st.session_state.session_cost = 0.0
+if "session_queries" not in st.session_state:
+    st.session_state.session_queries = 0
 
 # Sidebar Configuration
 with st.sidebar:
@@ -47,8 +54,21 @@ with st.sidebar:
         help="Chunks with similarity score below this threshold are rejected to avoid hallucination.",
     )
     st.markdown("---")
-    st.markdown(f"**Embedding Model:** `{EMBEDDING_MODEL}`")
-    st.markdown(f"**LLM Model:** `{LLM_MODEL}`")
+    st.subheader("📊 Session Usage & Cost")
+    sidebar_metrics_box = st.container()
+
+    def render_sidebar_metrics():
+        with sidebar_metrics_box:
+            m_col1, m_col2 = st.columns(2)
+            m_col1.metric("Total Tokens", f"{st.session_state.session_tokens:,}")
+            m_col2.metric("Total Cost", f"${st.session_state.session_cost:.5f}")
+            st.caption(f"Queries answered this session: **{st.session_state.session_queries}**")
+
+    render_sidebar_metrics()
+
+    st.markdown("---")
+    st.markdown(f"**Embedding Model:** `{EMBEDDING_MODEL}` (${MODEL_PRICING['text-embedding-3-small']['input_per_million']:.2f}/1M)")
+    st.markdown(f"**LLM Model:** `{LLM_MODEL}` (${MODEL_PRICING['gpt-4o-mini']['input_per_million']:.2f} in / ${MODEL_PRICING['gpt-4o-mini']['output_per_million']:.2f} out)")
     st.markdown(f"**Vector Store:** ChromaDB (`{CHROMA_PERSIST_DIR}`)")
 
     if st.button("Clear Chat History", use_container_width=True):
@@ -120,6 +140,15 @@ for msg in st.session_state.messages:
                     )
                     st.code(src.get("code_text", ""), language="python")
 
+        # Display per-query Token Usage and Cost breakdown
+        if msg.get("usage"):
+            u = msg["usage"]
+            st.caption(
+                f"⚡ **Usage:** `{u['total_tokens']:,}` tokens "
+                f"(Embedding: `{u['embedding_tokens']}` | Prompt: `{u['prompt_tokens']}` | Completion: `{u['completion_tokens']}`) • "
+                f"💵 **Cost:** `${u['cost_usd']:.5f}`"
+            )
+
 # Chat input box
 user_question = st.chat_input("Ask a question about the indexed codebase...")
 
@@ -157,13 +186,43 @@ if user_question:
                             )
                             st.code(src["code_text"], language="python")
 
-                # Save assistant response to session state
+                # Extract tokens and cost breakdown
+                emb_tokens = response.embedding_usage.total_tokens if response.embedding_usage else 0
+                prompt_tokens = response.llm_usage.prompt_tokens if response.llm_usage else 0
+                comp_tokens = response.llm_usage.completion_tokens if response.llm_usage else 0
+                query_tokens = response.total_tokens
+                query_cost = response.cost_usd
+
+                # Update running session totals
+                st.session_state.session_tokens += query_tokens
+                st.session_state.session_cost += query_cost
+                st.session_state.session_queries += 1
+
+                # Re-render sidebar metrics with new totals
+                render_sidebar_metrics()
+
+                usage_payload = {
+                    "total_tokens": query_tokens,
+                    "embedding_tokens": emb_tokens,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": comp_tokens,
+                    "cost_usd": query_cost,
+                }
+
+                st.caption(
+                    f"⚡ **Usage:** `{query_tokens:,}` tokens "
+                    f"(Embedding: `{emb_tokens}` | Prompt: `{prompt_tokens}` | Completion: `{comp_tokens}`) • "
+                    f"💵 **Cost:** `${query_cost:.5f}`"
+                )
+
+                # Save assistant response with usage to session state
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
                         "content": answer_text,
                         "citations": citations if response.found else [],
                         "sources": sources_data if response.found else [],
+                        "usage": usage_payload,
                     }
                 )
 

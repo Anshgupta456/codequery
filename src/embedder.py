@@ -15,6 +15,7 @@ from src.config import (
     COLLECTION_NAME,
     EMBEDDING_MODEL,
 )
+from src.cost_tracker import TokenUsage, track_usage
 from src.ingest import collect_files
 
 # Ensure .env is loaded
@@ -76,14 +77,17 @@ def generate_embeddings(
     model: str = EMBEDDING_MODEL,
     batch_size: int = 100,
     use_mock: bool = False,
-) -> List[List[float]]:
+    return_usage: bool = False,
+) -> Any:
     """
     Generate embeddings for a list of texts using OpenAI text-embedding-3-small
     (or deterministic mock embeddings if use_mock=True).
+    If return_usage=True, returns (embeddings, TokenUsage).
     """
     if not texts:
-        return []
+        return ([], TokenUsage()) if return_usage else []
 
+    total_usage = TokenUsage()
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     placeholder_keys = {"", "your-openai-api-key-here", "your_openai_api_key_here"}
 
@@ -91,7 +95,11 @@ def generate_embeddings(
         if not use_mock and (api_key in placeholder_keys):
             # If no valid API key is available, warn and use mock embeddings for safety
             print("[Warning] No valid OPENAI_API_KEY found in .env; falling back to deterministic mock embeddings.")
-        return generate_mock_embeddings(texts)
+        mock_embs = generate_mock_embeddings(texts)
+        # Mock tokens: ~1 token per 4 characters
+        mock_tokens = sum(max(1, len(t) // 4) for t in texts)
+        mock_usage = TokenUsage(prompt_tokens=mock_tokens, total_tokens=mock_tokens, cost_usd=0.0)
+        return (mock_embs, mock_usage) if return_usage else mock_embs
 
     if client is None:
         client = OpenAI(api_key=api_key)
@@ -103,6 +111,12 @@ def generate_embeddings(
         for item in response.data:
             all_embeddings.append(item.embedding)
 
+        if hasattr(response, "usage") and response.usage:
+            batch_usage = track_usage(response.usage, model)
+            total_usage = total_usage + batch_usage
+
+    if return_usage:
+        return all_embeddings, total_usage
     return all_embeddings
 
 

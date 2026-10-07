@@ -13,6 +13,7 @@ from src.config import (
     DEFAULT_TOP_K,
     LLM_MODEL,
 )
+from src.cost_tracker import TokenUsage, track_usage
 from src.retriever import RetrievedChunk, get_collection, retrieve_chunks
 
 dotenv.load_dotenv()
@@ -55,12 +56,18 @@ def extract_citations(text: str) -> List[str]:
 
 @dataclass
 class QAResponse:
-    """Represents the final answer, citations, and retrieved chunks."""
+    """Represents the final answer, citations, retrieved chunks, and token/cost usage."""
     question: str
     answer: str
     citations: List[str]
     retrieved_chunks: List[RetrievedChunk]
     found: bool
+    total_tokens: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cost_usd: float = 0.0
+    embedding_usage: Optional[TokenUsage] = None
+    llm_usage: Optional[TokenUsage] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
@@ -69,6 +76,12 @@ class QAResponse:
             "answer": self.answer,
             "citations": self.citations,
             "found": self.found,
+            "total_tokens": self.total_tokens,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "cost_usd": self.cost_usd,
+            "embedding_usage": self.embedding_usage.to_dict() if self.embedding_usage else None,
+            "llm_usage": self.llm_usage.to_dict() if self.llm_usage else None,
             "retrieved_chunks": [c.to_dict() for c in self.retrieved_chunks],
         }
 
@@ -78,10 +91,11 @@ def generate_answer(
     chunks: List[RetrievedChunk],
     client: Optional[OpenAI] = None,
     model: str = LLM_MODEL,
-) -> str:
+    return_usage: bool = False,
+) -> Any:
     """Call gpt-4o-mini with the strict system prompt and retrieved code context."""
     if not chunks:
-        return NOT_FOUND_RESPONSE
+        return (NOT_FOUND_RESPONSE, TokenUsage()) if return_usage else NOT_FOUND_RESPONSE
 
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if client is None:
@@ -104,7 +118,12 @@ Please answer the question based only on the code context above. Always cite `fi
         temperature=0.0,
     )
 
-    return (response.choices[0].message.content or "").strip()
+    answer_text = (response.choices[0].message.content or "").strip()
+    usage = track_usage(getattr(response, "usage", None), model)
+
+    if return_usage:
+        return answer_text, usage
+    return answer_text
 
 
 def ask_codebase(
@@ -117,9 +136,10 @@ def ask_codebase(
 ) -> QAResponse:
     """
     End-to-end RAG pipeline:
-    1. Retrieve chunks matching the question.
+    1. Retrieve chunks matching the question (capturing embedding usage).
     2. Enforce similarity threshold.
-    3. Generate cited answer via LLM (or refuse if context is missing/insufficient).
+    3. Generate cited answer via LLM (capturing completion usage).
+    4. Compute and return unified token usage and cost.
     """
     clean_question = question.strip()
     if not clean_question:
@@ -129,18 +149,21 @@ def ask_codebase(
             citations=[],
             retrieved_chunks=[],
             found=False,
+            embedding_usage=TokenUsage(),
+            llm_usage=TokenUsage(),
         )
 
     if collection is None:
         collection = get_collection()
 
-    # Step 1: Retrieve top-k chunks
-    retrieved = retrieve_chunks(
+    # Step 1: Retrieve top-k chunks with embedding usage captured
+    retrieved, emb_usage = retrieve_chunks(
         query=clean_question,
         collection=collection,
         top_k=top_k,
         client=client,
         use_mock=use_mock,
+        return_usage=True,
     )
 
     # Step 2: Check similarity threshold
@@ -153,6 +176,12 @@ def ask_codebase(
             citations=[],
             retrieved_chunks=retrieved,
             found=False,
+            total_tokens=emb_usage.total_tokens,
+            prompt_tokens=emb_usage.prompt_tokens,
+            completion_tokens=0,
+            cost_usd=emb_usage.cost_usd,
+            embedding_usage=emb_usage,
+            llm_usage=TokenUsage(0, 0, 0, 0.0),
         )
 
     # Step 3: LLM generation
@@ -160,19 +189,30 @@ def ask_codebase(
         # Mock mode for testing without OpenAI API access
         answer = f"Mock answer grounded in {valid_chunks[0].citation}."
         citations = [valid_chunks[0].citation]
+        mock_llm_usage = TokenUsage(prompt_tokens=100, completion_tokens=20, total_tokens=120, cost_usd=0.0)
+        total_usage = emb_usage + mock_llm_usage
         return QAResponse(
             question=clean_question,
             answer=answer,
             citations=citations,
             retrieved_chunks=valid_chunks,
             found=True,
+            total_tokens=total_usage.total_tokens,
+            prompt_tokens=total_usage.prompt_tokens,
+            completion_tokens=total_usage.completion_tokens,
+            cost_usd=total_usage.cost_usd,
+            embedding_usage=emb_usage,
+            llm_usage=mock_llm_usage,
         )
 
-    raw_answer = generate_answer(
+    raw_answer, llm_usage = generate_answer(
         question=clean_question,
         chunks=valid_chunks,
         client=client,
+        return_usage=True,
     )
+
+    total_usage = emb_usage + llm_usage
 
     # Check if the LLM refused to answer
     is_refusal = (
@@ -189,6 +229,12 @@ def ask_codebase(
             citations=[],
             retrieved_chunks=valid_chunks,
             found=False,
+            total_tokens=total_usage.total_tokens,
+            prompt_tokens=total_usage.prompt_tokens,
+            completion_tokens=total_usage.completion_tokens,
+            cost_usd=total_usage.cost_usd,
+            embedding_usage=emb_usage,
+            llm_usage=llm_usage,
         )
 
     citations = extract_citations(raw_answer)
@@ -202,4 +248,10 @@ def ask_codebase(
         citations=citations,
         retrieved_chunks=valid_chunks,
         found=True,
+        total_tokens=total_usage.total_tokens,
+        prompt_tokens=total_usage.prompt_tokens,
+        completion_tokens=total_usage.completion_tokens,
+        cost_usd=total_usage.cost_usd,
+        embedding_usage=emb_usage,
+        llm_usage=llm_usage,
     )

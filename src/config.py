@@ -56,3 +56,15 @@ DEFAULT_SIMILARITY_THRESHOLD = 0.30  # Cosine similarity threshold (score = 1.0 
 # Persistent Chroma store directory
 CHROMA_PERSIST_DIR = Path("./chroma_data")
 COLLECTION_NAME = "codequery_collection"
+
+# Model Pricing in USD per 1,000,000 tokens
+MODEL_PRICING = {
+    "gpt-4o-mini": {
+        "input_per_million": 0.15,
+        "output_per_million": 0.60,
+    },
+    "text-embedding-3-small": {
+        "input_per_million": 0.02,
+        "output_per_million": 0.00,
+    },
+}

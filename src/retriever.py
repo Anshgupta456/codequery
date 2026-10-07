@@ -11,6 +11,7 @@ from src.config import (
     COLLECTION_NAME,
     DEFAULT_TOP_K,
 )
+from src.cost_tracker import TokenUsage
 from src.embedder import (
     generate_embeddings,
     get_chroma_client,
@@ -68,26 +69,39 @@ def retrieve_chunks(
     client: Optional[OpenAI] = None,
     use_mock: bool = False,
     min_score: Optional[float] = None,
-) -> List[RetrievedChunk]:
+    return_usage: bool = False,
+) -> Any:
     """
     Embed the query, perform similarity search against ChromaDB,
     and return matched chunks with metadata and similarity scores.
+    If return_usage=True, returns (List[RetrievedChunk], TokenUsage).
     """
     clean_query = query.strip()
     if not clean_query:
-        return []
+        return ([], TokenUsage()) if return_usage else []
 
     if collection is None:
         collection = get_collection()
 
     # Embed query using text-embedding-3-small (or mock if use_mock=True)
-    query_embeddings = generate_embeddings(
-        texts=[clean_query],
-        client=client,
-        use_mock=use_mock,
-    )
+    if return_usage:
+        query_embeddings, emb_usage = generate_embeddings(
+            texts=[clean_query],
+            client=client,
+            use_mock=use_mock,
+            return_usage=True,
+        )
+    else:
+        query_embeddings = generate_embeddings(
+            texts=[clean_query],
+            client=client,
+            use_mock=use_mock,
+            return_usage=False,
+        )
+        emb_usage = TokenUsage()
+
     if not query_embeddings:
-        return []
+        return ([], emb_usage) if return_usage else []
 
     # Query Chroma
     results = collection.query(
@@ -125,4 +139,6 @@ def retrieve_chunks(
             )
         )
 
+    if return_usage:
+        return retrieved, emb_usage
     return retrieved
