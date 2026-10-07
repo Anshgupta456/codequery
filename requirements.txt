@@ -1,0 +1,2 @@
+# CodeQuery - Phase 1 dependencies
+pytest>=8.0.0
