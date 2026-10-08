@@ -132,6 +132,14 @@ Question: {question}
 
 Please answer the question based only on the code context above. Always cite `file_path:start_line-end_line` for every claim."""
 
+    print("\n" + "-" * 75, flush=True)
+    print("[DEBUG LLM CALL] System Prompt sent to LLM:", flush=True)
+    print(SYSTEM_PROMPT, flush=True)
+    print("-" * 75, flush=True)
+    print(f"[DEBUG LLM CALL] Question: '{question}'", flush=True)
+    print(f"[DEBUG LLM CALL] Context chunks count: {len(chunks)} (~{len(context_str)} characters)", flush=True)
+    print("-" * 75, flush=True)
+
     response = client.chat.completions.create(
         model=model,
         messages=[
@@ -143,6 +151,11 @@ Please answer the question based only on the code context above. Always cite `fi
 
     answer_text = (response.choices[0].message.content or "").strip()
     usage = track_usage(getattr(response, "usage", None), model)
+
+    print("-" * 75, flush=True)
+    print(f"[DEBUG LLM RAW RESPONSE]:", flush=True)
+    print(answer_text, flush=True)
+    print("-" * 75 + "\n", flush=True)
 
     if return_usage:
         return answer_text, usage
@@ -202,6 +215,20 @@ def ask_codebase(
     # Step 2: Check similarity threshold
     # If no chunk meets the threshold, reject early without calling the LLM for answer generation
     valid_chunks = [c for c in retrieved if c.score >= similarity_threshold]
+
+    print("\n" + "=" * 75, flush=True)
+    print(f"[DEBUG THRESHOLD CHECK] Question: '{clean_question}'", flush=True)
+    print(f"  Similarity threshold: {similarity_threshold}", flush=True)
+    print(f"  Total chunks retrieved: {len(retrieved)}", flush=True)
+    print(f"  Chunks surviving threshold (score >= {similarity_threshold}): {len(valid_chunks)}", flush=True)
+    if valid_chunks:
+        print("  Chunks passed into LLM context:", flush=True)
+        for idx, c in enumerate(valid_chunks, 1):
+            print(f"    [{idx}] {c.citation} (Type: {c.chunk_type}, Symbol: {c.name or 'N/A'}, Best Similarity Score: {c.score:.4f}, Chroma Distance: {c.distance:.4f})", flush=True)
+    else:
+        print("  NO chunks survived threshold! LLM will NOT be called.", flush=True)
+    print("=" * 75 + "\n", flush=True)
+
     if not valid_chunks:
         total_pre_llm = emb_usage + qe_usage
         return QAResponse(
@@ -263,6 +290,7 @@ def ask_codebase(
     )
 
     if is_refusal:
+        print("[DEBUG REFUSAL CHECK] Refusal detected in raw answer! Overwriting response with NOT_FOUND_RESPONSE.", flush=True)
         return QAResponse(
             question=clean_question,
             answer=NOT_FOUND_RESPONSE,
