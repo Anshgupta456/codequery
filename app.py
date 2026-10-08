@@ -99,7 +99,7 @@ st.subheader("1. Ingest & Index Codebase")
 tab_gh, tab_zip, tab_sample = st.tabs([
     "🔗 Clone GitHub Repo",
     "📦 Upload Codebase (.zip)",
-    "📁 Local / Sample Codebase",
+    "⚡ Pre-loaded Demo Repos",
 ])
 
 target_path_to_index = None
@@ -161,53 +161,32 @@ with tab_zip:
                 st.error(f"Failed to extract ZIP archive: {e}")
 
 with tab_sample:
-    st.markdown("Select one of the pre-loaded sample codebases or specify a path.")
+    st.markdown("Try CodeQuery instantly on one of the pre-loaded demo repositories.")
     loc_c1, loc_c2 = st.columns([4, 1])
     with loc_c1:
-        sample_pick = st.selectbox(
-            "Sample Codebase",
-            options=[
-                "sample_repos/small_repo",
-                "sample_repos/portfolio",
-                "sample_repos/mern_sample",
-                "Custom Path...",
-            ],
-            key="sample_pick",
+        DEMO_REPOS = {
+            "Small Python Repo (Auth, Database, Payments)": "sample_repos/small_repo",
+            "Portfolio Fullstack App (Node, Express, React)": "sample_repos/portfolio",
+            "MERN Sample Codebase (JWT Auth & Routes)": "sample_repos/mern_sample",
+        }
+        demo_choice = st.selectbox(
+            "Select Demo Repository",
+            options=list(DEMO_REPOS.keys()),
+            key="demo_pick",
         )
-        if sample_pick == "Custom Path...":
-            custom_path_str = st.text_input("Enter directory path:", placeholder="e.g. sample_repos/large_repo", key="custom_path_str")
-            chosen_local_path = custom_path_str.strip()
-        else:
-            chosen_local_path = sample_pick
     with loc_c2:
         st.write("")
         st.write("")
-        loc_btn = st.button("Index Path", type="primary", use_container_width=True, key="loc_btn")
+        demo_btn = st.button("Load Demo", type="primary", use_container_width=True, key="demo_btn")
 
-    if loc_btn:
-        clean_path = chosen_local_path.strip()
-        if not clean_path:
-            st.error("Please enter a valid directory path.")
-        elif is_git_url(clean_path):
-            with st.spinner(f"Detected Git URL. Cloning `{clean_path}`..."):
-                try:
-                    target_path_to_index = clone_git_repo(clean_path)
-                    display_name = clean_path
-                except Exception as e:
-                    st.error(f"Failed to clone Git repository: {e}")
-        elif (clean_path.startswith("C:\\") or clean_path.startswith("c:\\") or clean_path.startswith("D:\\")) and not Path(clean_path).exists():
-            st.error(
-                f"❌ Cannot access local path `{clean_path}` from the cloud container. "
-                "Because this app is deployed on Streamlit Cloud, it cannot access files on your personal computer's hard drive directly. "
-                "👉 Please use the **'🔗 Clone GitHub Repo'** tab to paste your GitHub URL or the **'📦 Upload Codebase (.zip)'** tab to upload your files!"
-            )
+    if demo_btn:
+        selected_rel_path = DEMO_REPOS[demo_choice]
+        t_path = Path(selected_rel_path).resolve()
+        if not t_path.exists() or not t_path.is_dir():
+            st.error(f"Demo repository `{selected_rel_path}` was not found.")
         else:
-            t_path = Path(clean_path).resolve()
-            if not t_path.exists() or not t_path.is_dir():
-                st.error(f"Directory `{t_path}` does not exist or is not a directory.")
-            else:
-                target_path_to_index = t_path
-                display_name = clean_path
+            target_path_to_index = t_path
+            display_name = demo_choice
 
 # Execute Indexing when a target directory is prepared
 if target_path_to_index is not None:
