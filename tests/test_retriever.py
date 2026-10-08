@@ -179,3 +179,14 @@ def test_toggle_multi_query_off(indexed_test_collection):
 
     assert len(variations) == 0
     assert qe_usage.total_tokens == 0
+
+
+def test_is_git_url_detection():
+    """Verify is_git_url identifies GitHub and Git URLs correctly."""
+    from src.ingest import is_git_url
+
+    assert is_git_url("https://github.com/Anshgupta456/cbt_prep") is True
+    assert is_git_url("http://github.com/user/repo.git") is True
+    assert is_git_url("git@github.com:user/repo.git") is True
+    assert is_git_url("sample_repos/small_repo") is False
+    assert is_git_url("C:\\Users\\user\\Desktop\\code") is False

@@ -8,6 +8,13 @@ import streamlit as st
 # Ensure project root is in sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# If running on Streamlit Cloud, inject OPENAI_API_KEY from st.secrets into environment
+try:
+    if "OPENAI_API_KEY" in st.secrets and not os.getenv("OPENAI_API_KEY"):
+        os.environ["OPENAI_API_KEY"] = str(st.secrets["OPENAI_API_KEY"]).strip()
+except Exception:
+    pass
+
 from src.config import (
     CHROMA_PERSIST_DIR,
     COLLECTION_NAME,
@@ -19,6 +26,7 @@ from src.config import (
     MODEL_PRICING,
 )
 from src.embedder import get_chroma_client, index_directory
+from src.ingest import clone_git_repo, extract_zip_repo, is_git_url
 from src.qa_chain import NOT_FOUND_RESPONSE, ask_codebase
 from src.retriever import get_collection
 
@@ -87,48 +95,144 @@ st.markdown("Ask natural-language questions about any codebase with precise `fil
 
 # Repository Indexing Section
 st.subheader("1. Ingest & Index Codebase")
-col1, col2 = st.columns([4, 1])
 
-with col1:
-    default_path = "sample_repos/small_repo"
-    repo_input = st.text_input(
-        "Codebase Directory Path",
-        value=default_path,
-        placeholder="e.g. sample_repos/small_repo or C:/path/to/repo",
-    )
+tab_gh, tab_zip, tab_sample = st.tabs([
+    "🔗 Clone GitHub Repo",
+    "📦 Upload Codebase (.zip)",
+    "📁 Local / Sample Codebase",
+])
 
-with col2:
-    st.write("")  # spacing
-    st.write("")
-    index_clicked = st.button("Index Codebase", type="primary", use_container_width=True)
+target_path_to_index = None
+display_name = None
 
-if index_clicked:
-    target_path = Path(repo_input).resolve()
-    if not target_path.exists() or not target_path.is_dir():
-        st.error(f"Error: Directory '{target_path}' does not exist or is not a directory.")
-    else:
-        progress_bar = st.progress(0.0)
-        status_box = st.empty()
+with tab_gh:
+    st.markdown("Enter any public GitHub repository URL to clone and index it automatically.")
+    gh_c1, gh_c2 = st.columns([4, 1])
+    with gh_c1:
+        gh_input = st.text_input(
+            "GitHub Repository URL",
+            value="https://github.com/Anshgupta456/cbt_prep",
+            placeholder="e.g. https://github.com/username/repository",
+            key="gh_input",
+        )
+    with gh_c2:
+        st.write("")
+        st.write("")
+        gh_btn = st.button("Clone & Index", type="primary", use_container_width=True, key="gh_btn")
 
-        def on_progress(ratio: float, msg: str) -> None:
-            progress_bar.progress(min(1.0, max(0.0, ratio)))
-            status_box.caption(f"⏳ {msg}")
+    if gh_btn:
+        if not gh_input.strip():
+            st.error("Please enter a valid GitHub URL.")
+        else:
+            with st.spinner(f"Cloning `{gh_input.strip()}`..."):
+                try:
+                    target_path_to_index = clone_git_repo(gh_input.strip())
+                    display_name = gh_input.strip()
+                except Exception as e:
+                    st.error(f"Failed to clone GitHub repository: {e}")
 
-        try:
-            count, collection = index_directory(
-                root_dir=target_path,
-                reset_collection=True,
-                progress_callback=on_progress,
+with tab_zip:
+    st.markdown("Upload a `.zip` archive of a codebase directly from your computer.")
+    zip_c1, zip_c2 = st.columns([4, 1])
+    with zip_c1:
+        uploaded_zip = st.file_uploader(
+            "Upload Codebase Archive (.zip)",
+            type=["zip"],
+            key="zip_uploader",
+        )
+    with zip_c2:
+        st.write("")
+        st.write("")
+        zip_btn = st.button(
+            "Extract & Index",
+            type="primary",
+            use_container_width=True,
+            disabled=(uploaded_zip is None),
+            key="zip_btn",
+        )
+
+    if zip_btn and uploaded_zip:
+        with st.spinner("Extracting archive..."):
+            try:
+                repo_stem = Path(uploaded_zip.name).stem
+                target_path_to_index = extract_zip_repo(uploaded_zip, repo_name=repo_stem)
+                display_name = f"{uploaded_zip.name} (uploaded)"
+            except Exception as e:
+                st.error(f"Failed to extract ZIP archive: {e}")
+
+with tab_sample:
+    st.markdown("Select one of the pre-loaded sample codebases or specify a path.")
+    loc_c1, loc_c2 = st.columns([4, 1])
+    with loc_c1:
+        sample_pick = st.selectbox(
+            "Sample Codebase",
+            options=[
+                "sample_repos/small_repo",
+                "sample_repos/portfolio",
+                "sample_repos/mern_sample",
+                "Custom Path...",
+            ],
+            key="sample_pick",
+        )
+        if sample_pick == "Custom Path...":
+            custom_path_str = st.text_input("Enter directory path:", placeholder="e.g. sample_repos/large_repo", key="custom_path_str")
+            chosen_local_path = custom_path_str.strip()
+        else:
+            chosen_local_path = sample_pick
+    with loc_c2:
+        st.write("")
+        st.write("")
+        loc_btn = st.button("Index Path", type="primary", use_container_width=True, key="loc_btn")
+
+    if loc_btn:
+        clean_path = chosen_local_path.strip()
+        if not clean_path:
+            st.error("Please enter a valid directory path.")
+        elif is_git_url(clean_path):
+            with st.spinner(f"Detected Git URL. Cloning `{clean_path}`..."):
+                try:
+                    target_path_to_index = clone_git_repo(clean_path)
+                    display_name = clean_path
+                except Exception as e:
+                    st.error(f"Failed to clone Git repository: {e}")
+        elif (clean_path.startswith("C:\\") or clean_path.startswith("c:\\") or clean_path.startswith("D:\\")) and not Path(clean_path).exists():
+            st.error(
+                f"❌ Cannot access local path `{clean_path}` from the cloud container. "
+                "Because this app is deployed on Streamlit Cloud, it cannot access files on your personal computer's hard drive directly. "
+                "👉 Please use the **'🔗 Clone GitHub Repo'** tab to paste your GitHub URL or the **'📦 Upload Codebase (.zip)'** tab to upload your files!"
             )
-            progress_bar.empty()
-            status_box.empty()
-            st.session_state.indexed_repo = str(target_path)
-            st.session_state.indexed_count = count
-            st.success(f"Successfully indexed {count} code chunks from `{target_path.name}` into ChromaDB!")
-        except Exception as e:
-            progress_bar.empty()
-            status_box.empty()
-            st.error(f"Failed to index repository: {e}")
+        else:
+            t_path = Path(clean_path).resolve()
+            if not t_path.exists() or not t_path.is_dir():
+                st.error(f"Directory `{t_path}` does not exist or is not a directory.")
+            else:
+                target_path_to_index = t_path
+                display_name = clean_path
+
+# Execute Indexing when a target directory is prepared
+if target_path_to_index is not None:
+    progress_bar = st.progress(0.0)
+    status_box = st.empty()
+
+    def on_progress(ratio: float, msg: str) -> None:
+        progress_bar.progress(min(1.0, max(0.0, ratio)))
+        status_box.caption(f"⏳ {msg}")
+
+    try:
+        count, collection = index_directory(
+            root_dir=target_path_to_index,
+            reset_collection=True,
+            progress_callback=on_progress,
+        )
+        progress_bar.empty()
+        status_box.empty()
+        st.session_state.indexed_repo = display_name or str(target_path_to_index)
+        st.session_state.indexed_count = count
+        st.success(f"Successfully indexed {count} code chunks from `{display_name or target_path_to_index.name}` into ChromaDB!")
+    except Exception as e:
+        progress_bar.empty()
+        status_box.empty()
+        st.error(f"Failed to index repository: {e}")
 
 if st.session_state.indexed_repo:
     st.info(f"📁 Active Repository: `{st.session_state.indexed_repo}` ({st.session_state.indexed_count} chunks indexed)")

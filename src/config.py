@@ -15,6 +15,8 @@ IGNORED_DIRS = {
     ".pytest_cache",
     ".chroma",
     "chroma_data",
+    "cloned_repos",
+    "uploaded_repos",
     ".idea",
     ".vscode",
     ".eggs",
