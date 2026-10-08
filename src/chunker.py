@@ -1,5 +1,6 @@
 """Syntax-aware code chunking logic supporting Python (AST) and JS/TS/React (tree-sitter)."""
 import ast
+import bisect
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -276,13 +277,26 @@ def chunk_python_code(
 # JavaScript / TypeScript / React (tree-sitter) Chunking
 # ---------------------------------------------------------------------------
 
-def _get_ts_node_line_range(node: Any, total_lines: int) -> tuple[int, int]:
-    """Calculate 1-based (start_line, end_line) from a tree-sitter node."""
-    s = node.start_point.row + 1
-    if node.end_point.column == 0 and node.end_point.row > node.start_point.row:
-        e = node.end_point.row
+def _compute_line_starts(source_bytes: bytes) -> List[int]:
+    """Compute byte offsets for the start of each line (0-indexed)."""
+    starts = [0]
+    for idx, b in enumerate(source_bytes):
+        if b == 10:  # ord('\n')
+            starts.append(idx + 1)
+    return starts
+
+
+def _get_ts_node_line_range(node: Any, line_starts: List[int], total_lines: int) -> tuple[int, int]:
+    """
+    Calculate 1-based (start_line, end_line) from a tree-sitter node using byte offsets.
+    Avoids accessing node.start_point/end_point which allocates C Point structs that trigger
+    an access violation during Python cyclic garbage collection on Windows.
+    """
+    s = bisect.bisect_right(line_starts, node.start_byte)
+    if node.end_byte > node.start_byte:
+        e = bisect.bisect_right(line_starts, node.end_byte - 1)
     else:
-        e = node.end_point.row + 1
+        e = s
     e = min(max(1, e), total_lines)
     s = min(max(1, s), e)
     return s, e
@@ -392,6 +406,7 @@ def chunk_treesitter_code(
         return chunk_line_based(code, file_path, language=language)
 
     source_bytes = code.encode("utf-8")
+    line_starts = _compute_line_starts(source_bytes)
     tree = parser.parse(source_bytes)
 
     chunks: List[CodeChunk] = []
@@ -421,7 +436,7 @@ def chunk_treesitter_code(
             )
 
     def add_module_node(n: Any) -> None:
-        ns, ne = _get_ts_node_line_range(n, len(lines))
+        ns, ne = _get_ts_node_line_range(n, line_starts, len(lines))
         current_module_ranges.append((ns, ne, n.type != "comment"))
 
     for child in tree.root_node.children:
@@ -450,7 +465,7 @@ def chunk_treesitter_code(
         # 1. Function declaration
         if target_node.type in ("function_declaration", "generator_function_declaration"):
             flush_module()
-            s, e = _get_ts_node_line_range(child, len(lines))
+            s, e = _get_ts_node_line_range(child, line_starts, len(lines))
             name_node = target_node.child_by_field_name("name")
             fn_name = (
                 source_bytes[name_node.start_byte : name_node.end_byte].decode("utf-8", errors="replace")
@@ -481,7 +496,7 @@ def chunk_treesitter_code(
 
             if fn_decl_name:
                 flush_module()
-                s, e = _get_ts_node_line_range(child, len(lines))
+                s, e = _get_ts_node_line_range(child, line_starts, len(lines))
                 chunks.append(
                     CodeChunk(
                         file_path=file_path,
@@ -499,7 +514,7 @@ def chunk_treesitter_code(
         # 3. Class declaration & class components
         elif target_node.type == "class_declaration":
             flush_module()
-            s, e = _get_ts_node_line_range(child, len(lines))
+            s, e = _get_ts_node_line_range(child, line_starts, len(lines))
             name_node = target_node.child_by_field_name("name")
             cls_name = (
                 source_bytes[name_node.start_byte : name_node.end_byte].decode("utf-8", errors="replace")
@@ -523,7 +538,7 @@ def chunk_treesitter_code(
                 if body:
                     for b_child in body.children:
                         if b_child.type == "method_definition":
-                            m_s, m_e = _get_ts_node_line_range(b_child, len(lines))
+                            m_s, m_e = _get_ts_node_line_range(b_child, line_starts, len(lines))
                             m_name_node = b_child.child_by_field_name("name")
                             m_name = (
                                 source_bytes[m_name_node.start_byte : m_name_node.end_byte].decode("utf-8", errors="replace")
@@ -549,7 +564,7 @@ def chunk_treesitter_code(
 
             if route_name:
                 flush_module()
-                s, e = _get_ts_node_line_range(child, len(lines))
+                s, e = _get_ts_node_line_range(child, line_starts, len(lines))
                 chunks.append(
                     CodeChunk(
                         file_path=file_path,
@@ -563,7 +578,7 @@ def chunk_treesitter_code(
                 )
             elif assign_fn_name:
                 flush_module()
-                s, e = _get_ts_node_line_range(child, len(lines))
+                s, e = _get_ts_node_line_range(child, line_starts, len(lines))
                 chunks.append(
                     CodeChunk(
                         file_path=file_path,
@@ -582,7 +597,22 @@ def chunk_treesitter_code(
             add_module_node(child)
 
     flush_module()
-    return chunks
+
+    # Safely split any oversized chunks (>20,000 characters) to prevent exceeding embedding context limit
+    final_chunks: List[CodeChunk] = []
+    for c in chunks:
+        if len(c.code_text) > 20000:
+            sub_chunks = chunk_line_based(c.code_text, c.file_path, chunk_size=80, overlap=10, language=language)
+            for sc in sub_chunks:
+                sc.start_line = c.start_line + sc.start_line - 1
+                sc.end_line = min(c.end_line, c.start_line + sc.end_line - 1)
+                sc.chunk_type = c.chunk_type
+                sc.name = c.name
+                final_chunks.append(sc)
+        else:
+            final_chunks.append(c)
+
+    return final_chunks
 
 
 # ---------------------------------------------------------------------------

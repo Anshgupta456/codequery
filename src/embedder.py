@@ -3,7 +3,7 @@ import hashlib
 import math
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import chromadb
 import dotenv
@@ -126,6 +126,7 @@ def store_chunks(
     client: Optional[OpenAI] = None,
     batch_size: int = 100,
     use_mock: bool = False,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> int:
     """
     Embed and upsert CodeChunks into a ChromaDB collection with all metadata attached.
@@ -135,13 +136,6 @@ def store_chunks(
         return 0
 
     documents: List[str] = [chunk.code_text for chunk in chunks]
-    embeddings = generate_embeddings(
-        texts=documents,
-        client=client,
-        batch_size=batch_size,
-        use_mock=use_mock,
-    )
-
     ids: List[str] = []
     metadatas: List[Dict[str, Any]] = []
 
@@ -161,12 +155,31 @@ def store_chunks(
         }
         metadatas.append(metadata)
 
-    # Upsert in batches to Chroma
-    for i in range(0, len(chunks), batch_size):
-        b_ids = ids[i : i + batch_size]
-        b_docs = documents[i : i + batch_size]
-        b_embs = embeddings[i : i + batch_size]
-        b_meta = metadatas[i : i + batch_size]
+    total_chunks = len(chunks)
+    num_batches = math.ceil(total_chunks / batch_size)
+
+    # Process and upsert in batches to avoid huge memory/API spikes
+    for b_idx in range(num_batches):
+        start_i = b_idx * batch_size
+        end_i = min(start_i + batch_size, total_chunks)
+
+        if progress_callback:
+            ratio = 0.50 + 0.50 * (b_idx / max(1, num_batches))
+            progress_callback(
+                ratio,
+                f"Embedding & indexing batch {b_idx + 1}/{num_batches} ({start_i + 1}-{end_i} of {total_chunks} chunks)...",
+            )
+
+        b_docs = documents[start_i:end_i]
+        b_ids = ids[start_i:end_i]
+        b_meta = metadatas[start_i:end_i]
+
+        b_embs = generate_embeddings(
+            texts=b_docs,
+            client=client,
+            batch_size=batch_size,
+            use_mock=use_mock,
+        )
 
         collection.upsert(
             ids=b_ids,
@@ -174,6 +187,9 @@ def store_chunks(
             embeddings=b_embs,
             metadatas=b_meta,
         )
+
+    if progress_callback:
+        progress_callback(1.0, f"Successfully indexed {total_chunks} chunks.")
 
     return len(chunks)
 
@@ -184,18 +200,36 @@ def index_directory(
     collection_name: str = COLLECTION_NAME,
     reset_collection: bool = False,
     use_mock: bool = False,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
 ) -> Tuple[int, chromadb.Collection]:
     """
     Run end-to-end ingestion -> chunking -> embedding -> ChromaDB storage on root_dir.
     Returns (total_chunks_stored, collection).
     """
     root_path = Path(root_dir).resolve()
+    if progress_callback:
+        progress_callback(0.02, "Scanning repository files...")
+
     files = collect_files(root_path)
+    total_files = len(files)
+
+    if progress_callback:
+        progress_callback(0.05, f"Found {total_files} code files. Starting syntax chunking...")
 
     all_chunks: List[CodeChunk] = []
-    for file_path in files:
+    for idx, file_path in enumerate(files):
         file_chunks = chunk_file(file_path, repo_root=root_path)
         all_chunks.extend(file_chunks)
+
+        if progress_callback and (idx % 5 == 0 or idx == total_files - 1):
+            ratio = 0.05 + 0.45 * ((idx + 1) / max(1, total_files))
+            progress_callback(
+                ratio,
+                f"Chunking file {idx + 1}/{total_files} ({file_path.name}) - {len(all_chunks)} chunks parsed...",
+            )
+
+    if progress_callback:
+        progress_callback(0.50, f"Initializing vector store for {len(all_chunks)} chunks...")
 
     chroma_client = get_chroma_client(persist_dir)
     collection = get_or_create_collection(
@@ -208,6 +242,7 @@ def index_directory(
         chunks=all_chunks,
         collection=collection,
         use_mock=use_mock,
+        progress_callback=progress_callback,
     )
 
     return stored_count, collection

@@ -101,17 +101,28 @@ if index_clicked:
     if not target_path.exists() or not target_path.is_dir():
         st.error(f"Error: Directory '{target_path}' does not exist or is not a directory.")
     else:
-        with st.spinner(f"Ingesting and indexing '{target_path.name}' into ChromaDB..."):
-            try:
-                count, collection = index_directory(
-                    root_dir=target_path,
-                    reset_collection=True,
-                )
-                st.session_state.indexed_repo = str(target_path)
-                st.session_state.indexed_count = count
-                st.success(f"Successfully indexed {count} code chunks from `{target_path.name}` into ChromaDB!")
-            except Exception as e:
-                st.error(f"Failed to index repository: {e}")
+        progress_bar = st.progress(0.0)
+        status_box = st.empty()
+
+        def on_progress(ratio: float, msg: str) -> None:
+            progress_bar.progress(min(1.0, max(0.0, ratio)))
+            status_box.caption(f"⏳ {msg}")
+
+        try:
+            count, collection = index_directory(
+                root_dir=target_path,
+                reset_collection=True,
+                progress_callback=on_progress,
+            )
+            progress_bar.empty()
+            status_box.empty()
+            st.session_state.indexed_repo = str(target_path)
+            st.session_state.indexed_count = count
+            st.success(f"Successfully indexed {count} code chunks from `{target_path.name}` into ChromaDB!")
+        except Exception as e:
+            progress_bar.empty()
+            status_box.empty()
+            st.error(f"Failed to index repository: {e}")
 
 if st.session_state.indexed_repo:
     st.info(f"📁 Active Repository: `{st.session_state.indexed_repo}` ({st.session_state.indexed_count} chunks indexed)")
