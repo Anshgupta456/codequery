@@ -1,7 +1,7 @@
 """Question answering chain with grounding and citations (Phase 4)."""
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import chromadb
@@ -11,10 +11,16 @@ from openai import OpenAI
 from src.config import (
     DEFAULT_SIMILARITY_THRESHOLD,
     DEFAULT_TOP_K,
+    ENABLE_MULTI_QUERY,
     LLM_MODEL,
 )
 from src.cost_tracker import TokenUsage, track_usage
-from src.retriever import RetrievedChunk, get_collection, retrieve_chunks
+from src.retriever import (
+    RetrievedChunk,
+    classify_question,
+    get_collection,
+    retrieve_chunks,
+)
 
 dotenv.load_dotenv()
 
@@ -68,6 +74,19 @@ class QAResponse:
     cost_usd: float = 0.0
     embedding_usage: Optional[TokenUsage] = None
     llm_usage: Optional[TokenUsage] = None
+    query_expansion_usage: Optional[TokenUsage] = None
+    query_variations: List[str] = field(default_factory=list)
+    question_type: str = "lookup"
+
+    @property
+    def cost_breakdown(self) -> Any:
+        """Construct detailed cost breakdown separating query expansion from answer generation."""
+        from src.cost_tracker import create_cost_breakdown
+        return create_cost_breakdown(
+            embedding_usage=self.embedding_usage,
+            query_expansion_usage=self.query_expansion_usage,
+            answer_generation_usage=self.llm_usage,
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation."""
@@ -82,6 +101,10 @@ class QAResponse:
             "cost_usd": self.cost_usd,
             "embedding_usage": self.embedding_usage.to_dict() if self.embedding_usage else None,
             "llm_usage": self.llm_usage.to_dict() if self.llm_usage else None,
+            "query_expansion_usage": self.query_expansion_usage.to_dict() if self.query_expansion_usage else None,
+            "query_variations": self.query_variations,
+            "question_type": self.question_type,
+            "cost_breakdown": self.cost_breakdown.to_dict(),
             "retrieved_chunks": [c.to_dict() for c in self.retrieved_chunks],
         }
 
@@ -133,15 +156,19 @@ def ask_codebase(
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     client: Optional[OpenAI] = None,
     use_mock: bool = False,
+    question_type: Optional[str] = None,
+    enable_multi_query: Optional[bool] = None,
 ) -> QAResponse:
     """
     End-to-end RAG pipeline:
-    1. Retrieve chunks matching the question (capturing embedding usage).
+    1. Retrieve chunks matching the question (with optional multi-query expansion).
     2. Enforce similarity threshold.
-    3. Generate cited answer via LLM (capturing completion usage).
-    4. Compute and return unified token usage and cost.
+    3. Generate cited answer via LLM.
+    4. Compute and return unified token usage and itemized costs.
     """
     clean_question = question.strip()
+    resolved_q_type = question_type or classify_question(clean_question)
+
     if not clean_question:
         return QAResponse(
             question=question,
@@ -151,37 +178,47 @@ def ask_codebase(
             found=False,
             embedding_usage=TokenUsage(),
             llm_usage=TokenUsage(),
+            query_expansion_usage=TokenUsage(),
+            query_variations=[],
+            question_type=resolved_q_type,
         )
 
     if collection is None:
         collection = get_collection()
 
-    # Step 1: Retrieve top-k chunks with embedding usage captured
-    retrieved, emb_usage = retrieve_chunks(
+    # Step 1: Retrieve top-k chunks with embedding and expansion usage captured
+    retrieved, emb_usage, qe_usage, variations = retrieve_chunks(
         query=clean_question,
         collection=collection,
         top_k=top_k,
         client=client,
         use_mock=use_mock,
         return_usage=True,
+        return_details=True,
+        question_type=resolved_q_type,
+        enable_multi_query=enable_multi_query,
     )
 
     # Step 2: Check similarity threshold
-    # If no chunk meets the threshold, reject early without calling the LLM
+    # If no chunk meets the threshold, reject early without calling the LLM for answer generation
     valid_chunks = [c for c in retrieved if c.score >= similarity_threshold]
     if not valid_chunks:
+        total_pre_llm = emb_usage + qe_usage
         return QAResponse(
             question=clean_question,
             answer=NOT_FOUND_RESPONSE,
             citations=[],
             retrieved_chunks=retrieved,
             found=False,
-            total_tokens=emb_usage.total_tokens,
-            prompt_tokens=emb_usage.prompt_tokens,
-            completion_tokens=0,
-            cost_usd=emb_usage.cost_usd,
+            total_tokens=total_pre_llm.total_tokens,
+            prompt_tokens=total_pre_llm.prompt_tokens,
+            completion_tokens=total_pre_llm.completion_tokens,
+            cost_usd=total_pre_llm.cost_usd,
             embedding_usage=emb_usage,
             llm_usage=TokenUsage(0, 0, 0, 0.0),
+            query_expansion_usage=qe_usage,
+            query_variations=variations,
+            question_type=resolved_q_type,
         )
 
     # Step 3: LLM generation
@@ -190,7 +227,7 @@ def ask_codebase(
         answer = f"Mock answer grounded in {valid_chunks[0].citation}."
         citations = [valid_chunks[0].citation]
         mock_llm_usage = TokenUsage(prompt_tokens=100, completion_tokens=20, total_tokens=120, cost_usd=0.0)
-        total_usage = emb_usage + mock_llm_usage
+        total_usage = emb_usage + qe_usage + mock_llm_usage
         return QAResponse(
             question=clean_question,
             answer=answer,
@@ -203,6 +240,9 @@ def ask_codebase(
             cost_usd=total_usage.cost_usd,
             embedding_usage=emb_usage,
             llm_usage=mock_llm_usage,
+            query_expansion_usage=qe_usage,
+            query_variations=variations,
+            question_type=resolved_q_type,
         )
 
     raw_answer, llm_usage = generate_answer(
@@ -212,7 +252,7 @@ def ask_codebase(
         return_usage=True,
     )
 
-    total_usage = emb_usage + llm_usage
+    total_usage = emb_usage + qe_usage + llm_usage
 
     # Check if the LLM refused to answer
     is_refusal = (
@@ -235,6 +275,9 @@ def ask_codebase(
             cost_usd=total_usage.cost_usd,
             embedding_usage=emb_usage,
             llm_usage=llm_usage,
+            query_expansion_usage=qe_usage,
+            query_variations=variations,
+            question_type=resolved_q_type,
         )
 
     citations = extract_citations(raw_answer)
@@ -254,4 +297,7 @@ def ask_codebase(
         cost_usd=total_usage.cost_usd,
         embedding_usage=emb_usage,
         llm_usage=llm_usage,
+        query_expansion_usage=qe_usage,
+        query_variations=variations,
+        question_type=resolved_q_type,
     )

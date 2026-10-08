@@ -71,6 +71,9 @@ DEFAULT_SIMILARITY_THRESHOLD = 0.30  # Cosine similarity threshold (score = 1.0 
 CHROMA_PERSIST_DIR = Path("./chroma_data")
 COLLECTION_NAME = "codequery_collection"
 
+# Multi-query retrieval configuration
+ENABLE_MULTI_QUERY = True
+
 # Model Pricing in USD per 1,000,000 tokens
 MODEL_PRICING = {
     "gpt-4o-mini": {

@@ -14,6 +14,7 @@ from src.config import (
     DEFAULT_SIMILARITY_THRESHOLD,
     DEFAULT_TOP_K,
     EMBEDDING_MODEL,
+    ENABLE_MULTI_QUERY,
     LLM_MODEL,
     MODEL_PRICING,
 )
@@ -52,6 +53,11 @@ with st.sidebar:
         value=float(DEFAULT_SIMILARITY_THRESHOLD),
         step=0.05,
         help="Chunks with similarity score below this threshold are rejected to avoid hallucination.",
+    )
+    multi_query_toggle = st.checkbox(
+        "Enable Multi-Query Retrieval",
+        value=ENABLE_MULTI_QUERY,
+        help="Generate 3-4 query variations for lookup queries to bridge vocabulary mismatches.",
     )
     st.markdown("---")
     st.subheader("📊 Session Usage & Cost")
@@ -137,6 +143,13 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
+        # Display Multi-Query variations if present
+        if msg.get("query_variations"):
+            with st.expander("🔀 Multi-Query Variations (Query Expansion)", expanded=False):
+                st.markdown("Generated variations used for retrieval:")
+                for var in msg["query_variations"]:
+                    st.markdown(f"- `{var}`")
+
         # Display Sources section if available
         if msg.get("citations") or msg.get("sources"):
             with st.expander("📚 Sources & Citations", expanded=True):
@@ -156,11 +169,26 @@ for msg in st.session_state.messages:
         # Display per-query Token Usage and Cost breakdown
         if msg.get("usage"):
             u = msg["usage"]
-            st.caption(
-                f"⚡ **Usage:** `{u['total_tokens']:,}` tokens "
-                f"(Embedding: `{u['embedding_tokens']}` | Prompt: `{u['prompt_tokens']}` | Completion: `{u['completion_tokens']}`) • "
-                f"💵 **Cost:** `${u['cost_usd']:.5f}`"
-            )
+            qe_tokens = u.get("query_expansion_tokens", 0)
+            qe_cost = u.get("query_expansion_cost", 0.0)
+            emb_tokens = u.get("embedding_tokens", 0)
+            emb_cost = u.get("embedding_cost", 0.0)
+            ans_tokens = u.get("answer_tokens", 0)
+            ans_cost = u.get("answer_cost", 0.0)
+
+            if qe_tokens > 0:
+                st.caption(
+                    f"⚡ **Usage:** `{u['total_tokens']:,}` tokens • 💵 **Total Cost:** `${u['cost_usd']:.5f}`\n\n"
+                    f"• **Query Expansion:** `{qe_tokens}` tokens (${qe_cost:.5f}) • "
+                    f"**Embeddings:** `{emb_tokens}` tokens (${emb_cost:.5f}) • "
+                    f"**Answer Generation:** `{ans_tokens}` tokens (${ans_cost:.5f})"
+                )
+            else:
+                st.caption(
+                    f"⚡ **Usage:** `{u['total_tokens']:,}` tokens • 💵 **Total Cost:** `${u['cost_usd']:.5f}`\n\n"
+                    f"• **Embeddings:** `{emb_tokens}` tokens (${emb_cost:.5f}) • "
+                    f"**Answer Generation:** `{ans_tokens}` tokens (${ans_cost:.5f})"
+                )
 
 # Chat input box
 user_question = st.chat_input("Ask a question about the indexed codebase...")
@@ -180,12 +208,20 @@ if user_question:
                     question=user_question,
                     top_k=top_k,
                     similarity_threshold=threshold,
+                    enable_multi_query=multi_query_toggle,
                 )
                 answer_text = response.answer
                 citations = response.citations
                 sources_data = [chunk.to_dict() for chunk in response.retrieved_chunks]
+                query_variations = getattr(response, "query_variations", [])
 
                 st.markdown(answer_text)
+
+                if query_variations:
+                    with st.expander("🔀 Multi-Query Variations (Query Expansion)", expanded=False):
+                        st.markdown("Generated variations used for retrieval:")
+                        for var in query_variations:
+                            st.markdown(f"- `{var}`")
 
                 if response.found and sources_data:
                     with st.expander("📚 Sources & Citations", expanded=True):
@@ -203,12 +239,22 @@ if user_question:
 
                 # Extract tokens and cost breakdown defensively
                 emb_usage = getattr(response, "embedding_usage", None)
+                qe_usage = getattr(response, "query_expansion_usage", None)
                 llm_usage = getattr(response, "llm_usage", None)
+
                 emb_tokens = emb_usage.total_tokens if emb_usage else 0
+                emb_cost = emb_usage.cost_usd if emb_usage else 0.0
+
+                qe_tokens = qe_usage.total_tokens if qe_usage else 0
+                qe_cost = qe_usage.cost_usd if qe_usage else 0.0
+
                 prompt_tokens = llm_usage.prompt_tokens if llm_usage else 0
                 comp_tokens = llm_usage.completion_tokens if llm_usage else 0
-                query_tokens = getattr(response, "total_tokens", emb_tokens + prompt_tokens + comp_tokens)
-                query_cost = getattr(response, "cost_usd", 0.0)
+                ans_tokens = prompt_tokens + comp_tokens
+                ans_cost = llm_usage.cost_usd if llm_usage else 0.0
+
+                query_tokens = getattr(response, "total_tokens", emb_tokens + qe_tokens + ans_tokens)
+                query_cost = getattr(response, "cost_usd", emb_cost + qe_cost + ans_cost)
 
                 # Update running session totals
                 st.session_state.session_tokens += query_tokens
@@ -220,17 +266,30 @@ if user_question:
 
                 usage_payload = {
                     "total_tokens": query_tokens,
+                    "cost_usd": query_cost,
                     "embedding_tokens": emb_tokens,
+                    "embedding_cost": emb_cost,
+                    "query_expansion_tokens": qe_tokens,
+                    "query_expansion_cost": qe_cost,
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": comp_tokens,
-                    "cost_usd": query_cost,
+                    "answer_tokens": ans_tokens,
+                    "answer_cost": ans_cost,
                 }
 
-                st.caption(
-                    f"⚡ **Usage:** `{query_tokens:,}` tokens "
-                    f"(Embedding: `{emb_tokens}` | Prompt: `{prompt_tokens}` | Completion: `{comp_tokens}`) • "
-                    f"💵 **Cost:** `${query_cost:.5f}`"
-                )
+                if qe_tokens > 0:
+                    st.caption(
+                        f"⚡ **Usage:** `{query_tokens:,}` tokens • 💵 **Total Cost:** `${query_cost:.5f}`\n\n"
+                        f"• **Query Expansion:** `{qe_tokens}` tokens (${qe_cost:.5f}) • "
+                        f"**Embeddings:** `{emb_tokens}` tokens (${emb_cost:.5f}) • "
+                        f"**Answer Generation:** `{ans_tokens}` tokens (${ans_cost:.5f})"
+                    )
+                else:
+                    st.caption(
+                        f"⚡ **Usage:** `{query_tokens:,}` tokens • 💵 **Total Cost:** `${query_cost:.5f}`\n\n"
+                        f"• **Embeddings:** `{emb_tokens}` tokens (${emb_cost:.5f}) • "
+                        f"**Answer Generation:** `{ans_tokens}` tokens (${ans_cost:.5f})"
+                    )
 
                 # Save assistant response with usage to session state
                 st.session_state.messages.append(
@@ -239,6 +298,7 @@ if user_question:
                         "content": answer_text,
                         "citations": citations if response.found else [],
                         "sources": sources_data if response.found else [],
+                        "query_variations": query_variations,
                         "usage": usage_payload,
                     }
                 )

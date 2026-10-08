@@ -93,3 +93,45 @@ def track_usage(usage_obj: Any, model_name: str) -> TokenUsage:
     cost = calculate_cost(parsed, model_name)
     parsed.cost_usd = cost
     return parsed
+
+
+@dataclass
+class QueryCostBreakdown:
+    """
+    Detailed cost breakdown separating query expansion, embedding,
+    and answer generation costs.
+    """
+    embedding_usage: TokenUsage
+    query_expansion_usage: TokenUsage
+    answer_generation_usage: TokenUsage
+    total_usage: TokenUsage
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert breakdown to dictionary."""
+        return {
+            "embedding": self.embedding_usage.to_dict(),
+            "query_expansion": self.query_expansion_usage.to_dict(),
+            "answer_generation": self.answer_generation_usage.to_dict(),
+            "total": self.total_usage.to_dict(),
+        }
+
+
+def create_cost_breakdown(
+    embedding_usage: Optional[TokenUsage] = None,
+    query_expansion_usage: Optional[TokenUsage] = None,
+    answer_generation_usage: Optional[TokenUsage] = None,
+) -> QueryCostBreakdown:
+    """
+    Construct a QueryCostBreakdown cleanly categorizing query expansion cost
+    separately from answer generation and embedding costs.
+    """
+    emb = embedding_usage or TokenUsage()
+    qe = query_expansion_usage or TokenUsage()
+    ans = answer_generation_usage or TokenUsage()
+    total = emb + qe + ans
+    return QueryCostBreakdown(
+        embedding_usage=emb,
+        query_expansion_usage=qe,
+        answer_generation_usage=ans,
+        total_usage=total,
+    )
