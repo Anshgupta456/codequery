@@ -39,6 +39,76 @@ EXHAUSTIVE_PATTERNS = [
 ]
 
 
+_DEBUG_QUERY_COUNT = 0
+
+
+def _log_raw_chroma_results(
+    query_text: str,
+    results: Dict[str, Any],
+    top_n: int = 5,
+) -> None:
+    """Temporary debug logger: print the top raw results returned by ChromaDB BEFORE any threshold filtering."""
+    global _DEBUG_QUERY_COUNT
+    _DEBUG_QUERY_COUNT += 1
+    if _DEBUG_QUERY_COUNT > 3:
+        return
+
+    print("\n" + "=" * 75, flush=True)
+    print(f"[DEBUG LOGGING #{_DEBUG_QUERY_COUNT}/3] User Question: '{query_text}'", flush=True)
+    print("[DEBUG LOGGING] Top 5 raw ChromaDB results (BEFORE threshold filtering):", flush=True)
+    print("-" * 75, flush=True)
+
+    all_ids = results.get("ids", [])
+    all_metas = results.get("metadatas", [])
+    all_dists = results.get("distances", [])
+
+    flat_results = []
+    if all_ids and isinstance(all_ids[0], list):
+        for q_idx in range(len(all_ids)):
+            ids = all_ids[q_idx]
+            metas = all_metas[q_idx] if q_idx < len(all_metas) else []
+            dists = all_dists[q_idx] if q_idx < len(all_dists) else []
+            for cid, meta, dist in zip(ids, metas, dists):
+                flat_results.append((cid, meta, dist))
+    else:
+        for cid, meta, dist in zip(all_ids, all_metas, all_dists):
+            flat_results.append((cid, meta, dist))
+
+    seen: Dict[str, Dict[str, Any]] = {}
+    for cid, meta, dist in flat_results:
+        raw_dist = float(dist)
+        if cid not in seen or raw_dist < seen[cid]["raw_dist"]:
+            seen[cid] = {
+                "cid": cid,
+                "meta": meta,
+                "raw_dist": raw_dist,
+                "converted_sim": round(1.0 - raw_dist, 4),
+            }
+
+    sorted_items = sorted(seen.values(), key=lambda x: x["raw_dist"])[:top_n]
+
+    if not sorted_items:
+        print("  (No results returned by ChromaDB)", flush=True)
+    else:
+        for rank, item in enumerate(sorted_items, 1):
+            meta = item["meta"] or {}
+            fpath = meta.get("file_path", "unknown")
+            ctype = meta.get("chunk_type", "unknown")
+            sline = meta.get("start_line", "?")
+            eline = meta.get("end_line", "?")
+            cname = meta.get("name", "")
+            raw_d = item["raw_dist"]
+            conv_s = item["converted_sim"]
+
+            print(
+                f"  [{rank}] file_path: {fpath}:{sline}-{eline} | chunk_type: {ctype} ({cname})\n"
+                f"      -> Chroma raw return: distance = {raw_d:.4f} (ChromaDB raw metric: lower is closer)\n"
+                f"      -> CodeQuery metric:  converted similarity = {conv_s:.4f} (computed as 1.0 - distance)",
+                flush=True,
+            )
+    print("=" * 75 + "\n", flush=True)
+
+
 @dataclass
 class RetrievedChunk:
     """Represents a chunk retrieved from vector search with similarity score and metadata."""
@@ -259,6 +329,9 @@ def retrieve_chunks(
             include=["documents", "metadatas", "distances"],
         )
 
+        # Temporary debug logging for raw ChromaDB output before any threshold filtering
+        _log_raw_chroma_results(clean_query, results, top_n=5)
+
         # Step 4: Deduplicate by chunk_id and retain highest similarity score across all queries
         best_chunks_by_id: Dict[str, RetrievedChunk] = {}
         total_queries = len(all_queries)
@@ -325,6 +398,9 @@ def retrieve_chunks(
             n_results=top_k,
             include=["documents", "metadatas", "distances"],
         )
+
+        # Temporary debug logging for raw ChromaDB output before any threshold filtering
+        _log_raw_chroma_results(clean_query, results, top_n=5)
 
         retrieved = []
         ids_list = results.get("ids", [[]])[0]
